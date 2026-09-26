@@ -6,6 +6,23 @@
 
 Пометка **[правка]** означает, что тикет отклоняется от текста спецификации по итогам ревью; сводка отклонений внизу.
 
+## Статус (2026-09-26)
+
+| Этап | Статус | Примечание |
+|---|---|---|
+| 0. Решения | done | все девять решений внесены в спецификацию (§4, §15.1.1, §16.1, §23.1, §29, §31, §32.1, §47, §95) |
+| 1. Bootstrap | done | `mvn verify` зелёный локально; CI-прогон на GitHub runner’ах — после push |
+| 2. Публичный API | done | 154 теста в `mvn verify` на macOS (16 skipped — integration-тесты других ОС) |
+| 3. macOS | done | integration + round-trip через `qos_class_self()` проверены на macOS arm64 |
+| 4. Windows | done (code) | unit-тесты на фейке; integration-тесты выполняются только на `windows-latest` |
+| 5. Linux x86_64 | done (code) | в Docker (ядро без `CONFIG_UCLAMP_TASK`) проверены syscall-биндинг и переход EOPNOTSUPP → unsupported; полный uclamp-путь — на `ubuntu-24.04` |
+| 6. Linux aarch64 | done (code) | то же в Docker arm64 |
+| 7. Документация | done | README, Javadoc, `examples/basic`, `-Pbenchmarks`, ABI-тесты |
+| 8. Release engineering | done, кроме T-8.6 | профиль `release`, Central plugin, `release.yml`, `RELEASING.md`, CHANGELOG; сам релиз требует аккаунта Central, GPG-ключа и secrets |
+| 9. Валидация 1.0.0 | blocked | ждёт релиза 0.1.0 |
+
+Статус каждого тикета — в поле **Статус** и разделе **Результат** внутри файла тикета.
+
 ## Этап 0. Решения и правки спецификации
 
 Папка: `00-decisions/`

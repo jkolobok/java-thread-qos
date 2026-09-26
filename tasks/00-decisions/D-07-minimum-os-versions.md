@@ -6,7 +6,7 @@
 - **Отклонение от спецификации:** да, см. раздел «Отклонения» в индексе
 - **Зависит от:** нет
 - **Блокирует:** [T-7.1](../07-docs-examples/T-7.1-readme.md)
-- **Статус:** todo
+- **Статус:** done
 
 ## Что сделать
 
@@ -20,3 +20,7 @@
 ## Готово, когда
 
 Раздел есть, ссылки на источники добавлены в §94.
+
+## Результат
+
+Добавлен §32.1 с таблицей минимальных версий (macOS 10.10; Windows 8 для priority, Windows 10 1709 для ThreadPowerThrottling, EcoQoS-семантика Win11 / Win10 21H2+; Linux 5.3 + CONFIG_UCLAMP_TASK; JDK 25; native-image вне scope). В §94 добавлены ссылки на GetThreadInformation, THREAD_INFORMATION_CLASS, sys/qos.h, UAPI sched.h, JEP 472.

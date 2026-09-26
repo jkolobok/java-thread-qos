@@ -247,6 +247,8 @@ public final class ThreadQos {
 
     public static void set(QosClass qosClass);
 
+    public static boolean trySet(QosClass qosClass);
+
     public static Runnable wrap(
             QosClass qosClass,
             Runnable task
@@ -275,20 +277,23 @@ public static Optional<QosClass> current();
 
 Не ограничиваться одним boolean.
 
-Добавить immutable record:
+Добавить immutable record (финальная форма по решению D-06):
 
 ```java
 public record QosCapabilities(
         OperatingSystem operatingSystem,
+        Architecture architecture,
         boolean qosSupported,
         boolean nativeReadbackSupported,
         boolean performanceHintSupported,
-        boolean priorityAdjustmentSupported
+        boolean powerThrottlingSupported,
+        boolean priorityAdjustmentSupported,
+        String unsupportedReason
 ) {
 }
 ```
 
-`OperatingSystem`:
+`OperatingSystem` и `Architecture`:
 
 ```java
 public enum OperatingSystem {
@@ -297,9 +302,32 @@ public enum OperatingSystem {
     LINUX,
     OTHER
 }
+
+public enum Architecture {
+    X86_64,
+    AARCH64,
+    OTHER
+}
 ```
 
-Допустимо упростить структуру, если после реализации выяснится, что поля не дают практической ценности.
+Семантика полей по ОС (REQ-04):
+
+| Поле | macOS | Windows | Linux | Other |
+|---|---|---|---|---|
+| `operatingSystem` | `MACOS` | `WINDOWS` | `LINUX` | `OTHER` |
+| `architecture` | по `os.arch` | по `os.arch` | по `os.arch`; влияет на таблицу syscall | по `os.arch` |
+| `qosSupported` | `true` | `powerThrottlingSupported || priorityAdjustmentSupported` | `true` только после успешного probe uclamp (§18) | `false` |
+| `nativeReadbackSupported` | `true` (`qos_class_self`) | `true` (`GetThreadInformation`, `GetThreadPriority`) | `true` (`sched_getattr`), если `qosSupported` | `false` |
+| `performanceHintSupported` | `true` (pthread QoS) | `== powerThrottlingSupported` | `== qosSupported` (uclamp) | `false` |
+| `powerThrottlingSupported` | `false` (нет такого механизма) | результат probe `ThreadPowerThrottling` | `false` | `false` |
+| `priorityAdjustmentSupported` | `false` (v1 не трогает priority) | `true` | `false` (v1 не трогает nice/policy) | `false` |
+| `unsupportedReason` | `null` | `null`, либо причина отсутствия throttling (при этом `qosSupported` остаётся `true`) | `null`, либо причина (`ENOSYS`, `EPERM`, kernel < 5.3, `EOPNOTSUPP`) | «Operating system … is not supported» |
+
+Правила:
+
+- `unsupportedReason` MUST быть `null`, если `qosSupported == true` и все заявленные для ОС механизмы работают; иначе MUST содержать человекочитаемую причину. Так как логирование запрещено (§65), это единственный канал диагностики «почему noop».
+- Windows MUST NOT считаться unsupported при отсутствии `ThreadPowerThrottling` (старые сборки Windows 10): остаётся priority-часть, `qosSupported == true`, `powerThrottlingSupported == false`, `unsupportedReason` описывает отсутствие throttling.
+- Структуру после 1.0.0 менять только через MAJOR.
 
 Минимальное требование:
 
@@ -490,6 +518,8 @@ MethodHandle создаётся ровно один раз.
 ---
 
 ## 7.5. Error handling
+
+Каноническое описание `ThreadQosException` (§22 ссылается сюда).
 
 Функция возвращает:
 
@@ -947,6 +977,18 @@ BACKGROUND:
 
 Например `768` не означает «этому потоку гарантировано 75% CPU time».
 
+## 15.1.1. Ограничения uclamp на реальном железе (решение D-05)
+
+`uclamp` влияет:
+
+- на выбор частоты только при cpufreq governor `schedutil`;
+- на размещение (task placement) только на CPU с асимметричной capacity (big.LITTLE, P/E-ядра);
+- `util_max` ограничивает *оценку* utilization для DVFS и placement, но НЕ уменьшает долю CPU-времени в CFS/EEVDF.
+
+Следствие: на x86-серверах с `intel_pstate` в active mode или governor `performance` `BACKGROUND` практически не перестаёт конкурировать с `USER_INTERACTIVE` за CPU-время.
+
+Решение для v1: вариант (a) — Linux portable mapping остаётся только на uclamp, ограничение честно документируется (§57, §58, §59). Вариант (b) — понижать `nice` или переводить нижние классы в `SCHED_IDLE` — отклонён для portable API, потому что понижение `nice` необратимо без `CAP_SYS_NICE`, и `DEFAULT` не смог бы восстановить поток. Это кандидат в явный expert API v2 (§63).
+
 ---
 
 ## 15.2. Mapping должен быть централизован
@@ -995,6 +1037,17 @@ sched_util_max
 Не переводить чужой thread из `SCHED_FIFO` в `SCHED_OTHER`.
 
 Не менять nice автоматически.
+
+Для гарантии неизменности policy и параметров MUST использоваться флаги `SCHED_FLAG_KEEP_POLICY | SCHED_FLAG_KEEP_PARAMS` (`SCHED_FLAG_KEEP_ALL`) поверх скопированных из `sched_getattr` полей.
+
+## 16.1. Потоки с RT / deadline policy (решение D-04)
+
+Если `sched_getattr` вернул `sched_policy`, не входящую в `{SCHED_OTHER, SCHED_BATCH, SCHED_IDLE}` (то есть `SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE` и любые неизвестные), `set()` MUST бросить `ThreadQosException` с `nativeOperation = "sched_setattr"`, `nativeErrorCode = null` и сообщением, называющим текущую policy. Причины:
+
+- для RT-потоков ядро держит собственный default `util_min` (`sched_util_clamp_min_rt_default`), и явный `DEFAULT` (`util_min = 0`) его затирает, ухудшая поведение RT-потока;
+- для `SCHED_DEADLINE` с суженной affinity любой `sched_setattr` даёт `EPERM`, и ошибка выглядела бы как проблема прав.
+
+RT/DL потоки находятся вне контракта portable API v1; expert API для них — §63.
 
 ---
 
@@ -1094,7 +1147,7 @@ ThreadQos.set(...) // no-op
 ThreadQos.wrap(..., runnable)
 ```
 
-может вернуть исходный `Runnable`, если это не нарушает validation contract.
+MUST вернуть обёртку даже на unsupported-платформе (решение D-03): обёртка выполняет ту же валидацию (null, virtual thread), что и на поддерживаемых ОС. Возвращать исходный `Runnable` MUST NOT — экономия одной lambda не стоит platform-dependent контракта.
 
 Не писать warning в лог на каждый вызов.
 
@@ -1140,27 +1193,18 @@ ThreadQosException
 
 # 22. `ThreadQosException`
 
-Добавить:
+Каноническое описание класса и формата сообщения — §7.5 (REQ-22). Здесь только форма:
 
 ```java
 public final class ThreadQosException extends RuntimeException {
 
     private final OperatingSystem operatingSystem;
     private final String nativeOperation;
-    private final Integer nativeErrorCode;
+    private final Integer nativeErrorCode; // null, если ошибка не нативная (linkage, policy)
 }
 ```
 
-API можно упростить.
-
-Главное — exception должен позволять понять:
-
-```text
-что пытались сделать;
-на какой ОС;
-какая native function;
-какой error code.
-```
+Exception MUST позволять понять: что пытались сделать, на какой ОС, какая native function, какой error code. Все ожидаемые linkage/config-ошибки MUST оборачиваться в него с сохранением `cause` (§77).
 
 ---
 
@@ -1193,13 +1237,25 @@ public static <V> Callable<V> wrap(
 );
 ```
 
-На полностью unsupported platform допустимо вернуть исходный object:
+На unsupported platform обёртка всё равно создаётся (D-03, §20): контракт `wrap()` одинаков на всех ОС.
+
+## 23.1. Политика ошибок внутри `wrap()` (решение D-02)
+
+Если `set()` внутри обёртки бросил `ThreadQosException` (или `IllegalStateException` из-за virtual thread), исключение MUST быть проброшено, а `task` MUST NOT запускаться. Поток завершится с этим исключением до начала полезной работы; это осознанный выбор: молчаливый запуск latency-критичного кода без запрошенного QoS хуже явного падения при старте.
+
+Для случаев, когда важнее запустить поток, публичный API содержит:
 
 ```java
-return task;
+public static boolean trySet(QosClass qosClass);
 ```
 
-чтобы не создавать лишнюю lambda allocation.
+`trySet()` MUST:
+
+- выполнять те же проверки `null` и virtual thread, что и `set()`, и бросать `NullPointerException` / `IllegalStateException` (это ошибки программиста, а не среды);
+- возвращать `false` вместо `ThreadQosException` при нативной ошибке и на unsupported-платформе;
+- возвращать `true`, если native-вызов выполнен успешно.
+
+Пользователь, которому нужна «мягкая» обёртка, пишет её сам: `() -> { ThreadQos.trySet(qos); task.run(); }`.
 
 ---
 
@@ -1320,7 +1376,23 @@ Arena.global()
 
 # 29. Native access requirement
 
-Java FFM restricted operations требуют native access.
+Java FFM restricted operations (`Linker.downcallHandle`, `SymbolLookup.libraryLookup`, `MemorySegment.reinterpret` и т.д.) являются *restricted methods*.
+
+Фактическое поведение JDK 22–25 (решение D-08, JEP 472): вызов restricted method из модуля без native access **не бросает исключение по умолчанию**. Режим задаётся флагом `--illegal-native-access=<allow|warn|deny>`:
+
+| Режим | Поведение | Где по умолчанию |
+|---|---|---|
+| `warn` | одноразовое предупреждение на `stderr` для модуля, вызов выполняется | JDK 24, JDK 25 |
+| `deny` | `IllegalCallerException` при первом restricted-вызове | будущие JDK |
+| `allow` | без предупреждения | — |
+
+`--enable-native-access=<module>` даёт модулю native access и убирает предупреждение в любом режиме.
+
+Рекомендуемая строка запуска (REQ-29):
+
+```text
+--enable-native-access=com.clericode.threadqos
+```
 
 Для classpath application:
 
@@ -1328,13 +1400,9 @@ Java FFM restricted operations требуют native access.
 --enable-native-access=ALL-UNNAMED
 ```
 
-Для named module предпочтительно:
+Библиотека MUST быть modular JAR, чтобы при module-path deployment можно было разрешить native access только ей.
 
-```text
---enable-native-access=<library-module-name>
-```
-
-Библиотека должна быть modular JAR, чтобы пользователь при module-path deployment мог разрешить native access только этой библиотеке.
+Диагностика и текст подсказки описаны в §31 (каноническое место); проверка в CI — в §47.
 
 ---
 
@@ -1345,18 +1413,16 @@ Java FFM restricted operations требуют native access.
 Рабочее module name:
 
 ```text
-io.github.<owner>.threadqos
+com.clericode.threadqos
 ```
 
-или другое стабильное имя после выбора groupId.
+Решение D-01: `groupId = com.clericode`, имя модуля `com.clericode.threadqos`, корневой пакет `com.clericode.threadqos`.
 
-Экспортировать только public package.
-
-Например:
+Экспортировать только public package:
 
 ```java
-module io.github.owner.threadqos {
-    exports io.github.owner.threadqos;
+module com.clericode.threadqos {
+    exports com.clericode.threadqos;
 }
 ```
 
@@ -1366,20 +1432,31 @@ Internal packages не экспортировать.
 
 # 31. Native access diagnostics
 
-Если FFM call запрещён из-за native-access settings, exception должен содержать понятную подсказку.
+Каноническое описание диагностики native access (§29 и §47 ссылаются сюда).
 
-Например:
+Библиотека MUST при первой инициализации нативного provider проверить:
 
-```text
-Native access is required for java-thread-qos.
-Run the JVM with:
---enable-native-access=io.github.owner.threadqos
-
-For classpath usage:
---enable-native-access=ALL-UNNAMED
+```java
+ThreadQos.class.getModule().isNativeAccessEnabled()
 ```
 
-Не проглатывать `IllegalCallerException`.
+Если `false`, библиотека SHOULD сформировать подсказку (REQ-31):
+
+```text
+Native access is not enabled for module com.clericode.threadqos.
+On JDK 25 this produces a one-time warning; with --illegal-native-access=deny it fails.
+Run the JVM with:
+  --enable-native-access=com.clericode.threadqos
+For classpath usage:
+  --enable-native-access=ALL-UNNAMED
+```
+
+Правила:
+
+- при `--illegal-native-access=deny` `IllegalCallerException` MUST быть обёрнут в `ThreadQosException` с подсказкой выше и сохранённым `cause`; проглатывать его MUST NOT;
+- в режиме `warn` (по умолчанию на JDK 25) библиотека сама не пишет ничего в `stderr` (§65), но подсказка MUST добавляться в сообщение любой `ThreadQosException`, возникшей при linkage, если native access не включён;
+- `QosCapabilities.unsupportedReason` MAY содержать ту же подсказку, если provider не смог инициализироваться из-за native access;
+- для unnamed module (classpath) имя модуля в подсказке заменяется на `ALL-UNNAMED`.
 
 ---
 
@@ -1400,6 +1477,21 @@ Java 25
 Не пытаться поддерживать Java 17/21 через reflection/JNI compatibility layer.
 
 Если позже будет спрос — рассматривать отдельную major version/module.
+
+## 32.1. Минимальные версии ОС и рантаймов (решение D-07)
+
+| Платформа | Минимум | Основание |
+|---|---|---|
+| macOS | 10.10 (Yosemite) | `pthread_set_qos_class_self_np`, `qos_class_self` доступны с 10.10 (Apple `pthread/qos.h`, `__API_AVAILABLE(macos(10.10))`) |
+| Windows, priority | Windows 8 / Server 2012 | `SetThreadInformation` / `GetThreadInformation` появились в Windows 8; `SetThreadPriority` — любая поддерживаемая версия |
+| Windows, `ThreadPowerThrottling` | Windows 10 1709 (build 16299) | Microsoft Learn: `THREAD_POWER_THROTTLING_STATE` |
+| Windows, EcoQoS-семантика | Windows 11 / Windows 10 21H2+ | Microsoft Learn «Quality of Service»: на более ранних сборках флаг принимается, но политика планировщика описана для Windows 11 |
+| Linux | kernel 5.3 с `CONFIG_UCLAMP_TASK` | `sched_setattr(2)`, документ `sched-util-clamp` |
+| Linux, `SCHED_FLAG_KEEP_*` | kernel 5.3 | добавлены вместе с uclamp |
+| JDK | 25 | §32 |
+| GraalVM native-image | вне scope v1 | FFM в native-image требует отдельной конфигурации; не тестируется и не заявляется |
+
+Более старые версии ОС MUST давать `isSupported() == false` (Linux) либо `ThreadQosException` при вызове функции, которой нет в системной библиотеке (macOS/Windows), с понятным сообщением; падать при загрузке класса MUST NOT.
 
 ---
 
@@ -1435,10 +1527,12 @@ flatten-maven-plugin
 Рекомендуемая схема:
 
 ```xml
-<groupId>io.github.<github-user></groupId>
+<groupId>com.clericode</groupId>
 <artifactId>thread-qos</artifactId>
 <version>0.1.0-SNAPSHOT</version>
 ```
+
+Решение D-01: используется reverse-DNS домена владельца `com.clericode` (требует одноразовой DNS-верификации TXT-записью в Central Portal). GitHub-namespace `io.github.jkolobok` отклонён: домен стабильнее аккаунта, а смена `groupId` после релиза ломает координаты и имя модуля.
 
 Для Maven Central Sonatype часто автоматически предоставляет namespace вида:
 
@@ -1500,7 +1594,9 @@ NOTICE   // если требуется
 
 # 37. Maven Central artifacts
 
-Каждый release должен публиковать:
+Список плагинов — в §33 (каноническое место), плагин публикации — в §38; здесь только состав артефактов.
+
+Каждый release MUST публиковать:
 
 ```text
 thread-qos-X.Y.Z.jar
@@ -1750,21 +1846,20 @@ Linux arm64 особенно важен, потому что syscall numbers о�
 
 # 47. CI native access
 
-Tests должны запускаться с:
+Tests MUST запускаться с:
 
 ```text
---enable-native-access=<module-name>
+--enable-native-access=com.clericode.threadqos
 ```
 
-или:
+(или `ALL-UNNAMED`, если тесты работают на classpath; при surefire с module path — имя модуля).
 
-```text
---enable-native-access=ALL-UNNAMED
-```
+Negative test (после правки D-08, REQ-47) состоит из двух отдельных CI job'ов, потому что на JDK 25 отсутствие флага само по себе не даёт исключение:
 
-в зависимости от test setup.
+1. **`deny` job**: `--illegal-native-access=deny` без `--enable-native-access`. Ожидается `ThreadQosException`, `cause` — `IllegalCallerException`, сообщение содержит текст подсказки из §31 с реальным именем модуля.
+2. **`warn` job**: без обоих флагов. Ожидается, что `set()` выполняется (JDK печатает одноразовое предупреждение), а `capabilities()` / сообщение ошибки linkage (если она случится) содержит подсказку из §31. Тест проверяет `Module.isNativeAccessEnabled() == false` и наличие текста подсказки в `ThreadQosException`, созданной через фабрику linkage-ошибок.
 
-Добавить отдельный negative test/process test, подтверждающий понятную ошибку без native access, если это стабильно тестируется на JDK 25.
+Оба job'а запускаются как отдельный процесс (`surefire` с другим `argLine` либо `ProcessBuilder` из теста), чтобы не влиять на основной прогон.
 
 ---
 
@@ -1990,9 +2085,11 @@ README должен отвечать на вопросы:
 |---|---|---|
 | macOS | `pthread_set_qos_class_self_np` | Supported |
 | Windows | `SetThreadInformation` + `SetThreadPriority` | Supported |
-| Linux x86_64 | `sched_setattr` + `uclamp` | Supported if kernel supports uclamp |
-| Linux aarch64 | `sched_setattr` + `uclamp` | Supported if kernel supports uclamp |
+| Linux x86_64 | `sched_setattr` + `uclamp` | Supported if kernel supports uclamp ¹ |
+| Linux aarch64 | `sched_setattr` + `uclamp` | Supported if kernel supports uclamp ¹ |
 | Other | No-op | Unsupported |
+
+¹ Требуется Linux ≥ 5.3 с `CONFIG_UCLAMP_TASK`; syscall не должен блокироваться seccomp/контейнером. Эффект на частоту есть только с governor `schedutil`, на placement — только на CPU с асимметричной capacity; `util_max` не уменьшает долю CPU-времени (D-05, §15.1.1).
 
 ---
 
@@ -2014,6 +2111,8 @@ README должен отвечать на вопросы:
 Это semantic mapping библиотеки, а не утверждение, что API разных ОС эквивалентны 1:1.
 ```
 
+Рядом с таблицей — оговорка D-05 для колонки Linux: uclamp даёт performance hint для DVFS/placement, а не долю CPU; на x86 с `intel_pstate`/`performance` разница между классами может быть не наблюдаема.
+
 ---
 
 # 59. Security / safety documentation
@@ -2029,7 +2128,9 @@ README должен отвечать на вопросы:
 - не блокирует interrupts;
 - не управляет cgroups;
 - не управляет process priority;
-- не меняет affinity.
+- не меняет affinity;
+- на Linux не меняет `nice` и scheduling policy, а `uclamp` не гарантирует наблюдаемого эффекта на всех CPU/governor (D-05);
+- на Linux не обслуживает потоки с RT/deadline policy (D-04).
 
 ---
 
@@ -2517,28 +2618,31 @@ try (AffinityLock ignored = AffinityLock.acquireLock(cpu)) {
 
 # 85. Acceptance criteria — code
 
-Релиз-кандидат считается готовым, если:
+Релиз-кандидат считается готовым, если выполнены требования (идентификаторы — §95):
 
-1. Java 25 Maven project собирается с нуля.
-2. Runtime dependencies = 0.
-3. JNI/JNA/JNR отсутствуют.
-4. Native binaries в repository отсутствуют.
-5. macOS implementation реально вызывает pthread QoS.
-6. Windows implementation реально вызывает Win32 QoS + priority.
-7. Linux x86_64 implementation реально использует uclamp.
-8. Linux aarch64 implementation реально использует uclamp.
-9. Unsupported platforms безопасно работают через noop.
-10. Virtual threads запрещены.
-11. Native symbols/method handles кэшируются.
-12. OS/architecture detection не происходит на каждый call.
-13. Ошибки native APIs не проглатываются.
-14. Tests проходят на поддерживаемых CI platforms.
-15. Javadocs собираются без ошибок.
-16. Sources JAR создаётся.
-17. Javadoc JAR создаётся.
-18. GPG signing profile работает.
-19. Central publication profile работает.
-20. GitHub Release workflow работает.
+1. Java 25 Maven project собирается с нуля — REQ-32, REQ-33.
+2. Runtime dependencies = 0 — REQ-66.
+3. JNI/JNA/JNR отсутствуют — REQ-2.1.
+4. Native binaries в repository отсутствуют — REQ-2.1, REQ-2.2.
+5. macOS implementation реально вызывает pthread QoS — REQ-7.
+6. Windows implementation реально вызывает Win32 QoS + priority — REQ-8, REQ-9.
+7. Linux x86_64 implementation реально использует uclamp — REQ-12, REQ-15, REQ-16.
+8. Linux aarch64 implementation реально использует uclamp — REQ-14.
+9. Unsupported platforms безопасно работают через noop — REQ-20, REQ-21.
+10. Virtual threads запрещены — REQ-2.4.
+11. Native symbols/method handles кэшируются — REQ-27, REQ-28.
+12. OS/architecture detection не происходит на каждый call — REQ-5, REQ-27.
+13. Ошибки native APIs не проглатываются — REQ-21, REQ-22, REQ-77.
+14. Tests проходят на поддерживаемых CI platforms — REQ-46, REQ-48–REQ-53.
+15. Javadocs собираются без ошибок — REQ-74.
+16. Sources JAR создаётся — REQ-37.
+17. Javadoc JAR создаётся — REQ-37.
+18. GPG signing profile работает — REQ-37.
+19. Central publication profile работает — REQ-38, REQ-39.
+20. GitHub Release workflow работает — REQ-43, REQ-70, REQ-71.
+21. Native access диагностируется и проверяется в CI — REQ-29, REQ-31, REQ-47.
+22. `wrap()` строгий, `trySet()` присутствует — REQ-23.
+23. `QosCapabilities` содержит `unsupportedReason` и заполняет его — REQ-4.
 
 ---
 
@@ -2548,7 +2652,7 @@ try (AffinityLock ignored = AffinityLock.acquireLock(cpu)) {
 
 ```xml
 <dependency>
-    <groupId>io.github.someone</groupId>
+    <groupId>com.clericode</groupId>
     <artifactId>thread-qos</artifactId>
     <version>1.0.0</version>
 </dependency>
@@ -2557,7 +2661,7 @@ try (AffinityLock ignored = AffinityLock.acquireLock(cpu)) {
 запустить JVM с native access:
 
 ```text
---enable-native-access=io.github.someone.threadqos
+--enable-native-access=com.clericode.threadqos
 ```
 
 и использовать:
@@ -2787,6 +2891,8 @@ background maintenance
 
 # 90. Recommended repository description
 
+Дополняет §1 (цель проекта) и §35 (`description` в POM); дублирующее описание цели удалено.
+
 ```text
 Cross-platform Java thread QoS and performance hints for macOS, Windows and Linux using the Foreign Function & Memory API.
 ```
@@ -2894,6 +3000,10 @@ Apple open-source pthread QoS header:
 
 https://github.com/apple-oss-distributions/libpthread/blob/main/include/pthread/qos.h
 
+Apple `sys/qos.h` (значения `QOS_CLASS_*`, `qos_class_self`, доступность с macOS 10.10):
+
+https://github.com/apple-oss-distributions/libpthread/blob/main/include/sys/qos.h
+
 Apple libpthread QoS implementation:
 
 https://github.com/apple-oss-distributions/libpthread/blob/main/src/qos.c
@@ -2918,6 +3028,14 @@ Microsoft `SetThreadPriority`:
 
 https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority
 
+Microsoft `GetThreadInformation` (минимальная версия — Windows 8):
+
+https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadinformation
+
+Microsoft `THREAD_INFORMATION_CLASS`:
+
+https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ne-processthreadsapi-thread_information_class
+
 ---
 
 ## Linux
@@ -2941,6 +3059,14 @@ https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64
 Linux asm-generic syscall table:
 
 https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/unistd.h
+
+Linux UAPI `sched.h` (`struct sched_attr`, `SCHED_FLAG_*`):
+
+https://github.com/torvalds/linux/blob/master/include/uapi/linux/sched.h
+
+Java 25 `--illegal-native-access` (JEP 472):
+
+https://openjdk.org/jeps/472
 
 ---
 
@@ -2973,3 +3099,99 @@ https://docs.github.com/en/actions/tutorials/publish-packages/publish-java-packa
 GitHub Maven registry:
 
 https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-apache-maven-registry
+
+---
+
+# 95. Реестр требований (решение D-09)
+
+Модальность по RFC 2119: **MUST** — обязательно для релиза; **SHOULD** — ожидается, отклонение документируется; **MAY** — по усмотрению. Идентификатор `REQ-N` совпадает с номером канонического раздела `§N`; дублирующие разделы (§22→§7.5, §29/§47→§31, §37/§38→§33, §90→§1) содержат ссылку на канонический и не вводят собственных требований.
+
+| ID | Модальность | Требование (кратко) | Раздел | Проверка |
+|---|---|---|---|---|
+| REQ-1 | MUST | Библиотека задаёт QoS текущему platform thread; не обещает hard realtime и не является affinity | §1, §90 | README, §59 |
+| REQ-2.1 | MUST | Только FFM; никаких JNI/JNA/JNR/JavaCPP и поставляемых native-библиотек | §2.1 | enforcer ban + code review |
+| REQ-2.2 | MUST | Один релизный JAR без platform-specific artifacts | §2.2 | `mvn package` |
+| REQ-2.3 | MUST | API работает только с текущим потоком | §2.3 | API review |
+| REQ-2.4 | MUST | Вызов из virtual thread → `IllegalStateException` до native, на всех ОС включая noop | §2.4, §20 | unit tests |
+| REQ-3 | MUST | `QosClass` из пяти уровней с семантикой §3.1; `ThreadQos` с методами §3.2; `current()` в 1.0 отсутствует | §3 | javadoc, API review |
+| REQ-4 | MUST | `QosCapabilities` по D-06, `unsupportedReason` заполняется, таблица «поле × ОС» соблюдается | §4 | unit + integration tests |
+| REQ-5 | MUST | Provider выбирается один раз; никакого `os.name` на каждый `set()` | §5 | unit test, JMH |
+| REQ-6 | SHOULD | Структура пакетов §6; internal не экспортируется | §6, §30, §67 | `jar --describe-module` |
+| REQ-7 | MUST | macOS: `pthread_set_qos_class_self_np` через FFM, константы §7.3, `relative_priority = 0`, handle один раз | §7.1–§7.4 | symbol test, integration test |
+| REQ-7.5 | MUST | Ненулевой результат → `ThreadQosException` с os/qos/function/code | §7.5 | integration test |
+| REQ-7.6 | MAY | Readback `qos_class_self` для тестов и capabilities | §7.6 | round-trip test |
+| REQ-8 | MUST | Windows: `SetThreadInformation(ThreadPowerThrottling)`, layout §8.1, состояния §8.2 | §8 | layout test, integration test |
+| REQ-9 | MUST | Windows: `SetThreadPriority` по mapping §9.1; без `TIME_CRITICAL`, `REALTIME_PRIORITY_CLASS`, background mode; `GetLastError` через `captureCallState` | §9 | integration test |
+| REQ-12 | MUST | Linux: `syscall(SYS_sched_setattr/getattr)` через FFM с `firstVariadicArg(1)` | §12 | symbol test |
+| REQ-13 | MUST | Явный `MemoryLayout` для `sched_attr` (56 байт, alignment 8) с тестами offsets | §13, §52 | layout test |
+| REQ-14 | MUST | Syscall-номера по архитектуре (x86_64 314/315, aarch64 274/275), выбор один раз; неизвестная архитектура → unsupported | §14 | unit test, arm64 CI |
+| REQ-15 | MUST | Linux меняет только uclamp по таблице §15.1; mapping централизован | §15, §15.2 | integration test |
+| REQ-15.1.1 | MUST | Ограничения uclamp (governor, топология, `util_max`) задокументированы | §15.1.1, §57–§59 | README review |
+| REQ-16 | MUST | get-then-set с `KEEP_POLICY|KEEP_PARAMS`; policy/nice/RT/DL не меняются; RT/DL policy → `ThreadQosException` | §16, §16.1 | integration test |
+| REQ-17 | MUST | Флаги `SCHED_FLAG_UTIL_CLAMP_*` сверены с UAPI | §17 | code review, readback test |
+| REQ-18 | MUST | Lazy read-only probe; кэш; различение `ENOSYS`/`EOPNOTSUPP`/`EPERM`/старое ядро | §18 | unit tests с подменённым native |
+| REQ-19 | MUST | errno через `captureCallState("errno")`, per-call segment | §19, §28 | code review |
+| REQ-20 | MUST | Unsupported OS → noop-provider, `isSupported() == false`, `wrap()` всё равно оборачивает, без логов | §20 | unit test |
+| REQ-21 | MUST | Unsupported → noop; supported-but-failed → `ThreadQosException` | §21 | tests |
+| REQ-22 | MUST | `ThreadQosException` final, поля os/operation/code, cause сохраняется | §22 (→§7.5) | unit test |
+| REQ-23 | MUST | `wrap()` для Runnable/Callable, строгий (ошибка `set()` пробрасывается, task не запускается); `trySet()` возвращает boolean | §23, §23.1 | unit tests |
+| REQ-24 | MUST | `wrap()` не делает restore; документировано | §24 | README |
+| REQ-25 | MAY | Scoped API — только после доказанного round-trip | §25 | — |
+| REQ-26 | SHOULD | README показывает паттерн dedicated worker и предупреждение про shared executor | §26 | README review |
+| REQ-27 | MUST | В `set()` после init нет OS detection, lookup, reflection, monitor lock, логов, парсинга строк | §27 | code review, JMH |
+| REQ-28 | MUST | Linker/lookup/handles/layouts живут столько же, сколько provider; per-call confined arena допустима | §28 | code review |
+| REQ-29 | MUST | Modular JAR; документирована строка `--enable-native-access=com.clericode.threadqos` и режимы `--illegal-native-access` | §29 | README |
+| REQ-30 | MUST | `module-info.java`, единственный `exports` | §30 | `jar --describe-module` |
+| REQ-31 | MUST | Проверка `isNativeAccessEnabled()`, подсказка в сообщении, `IllegalCallerException` не проглатывается | §31 | negative CI jobs |
+| REQ-32 | MUST | Baseline Java 25; минимальные версии ОС §32.1 | §32, §32.1 | enforcer, README |
+| REQ-33 | MUST | Maven, плагины §33; без лишних плагинов | §33 | `mvn verify` |
+| REQ-34 | MUST | Координаты `com.clericode:thread-qos` | §34 | POM |
+| REQ-35 | MUST | POM-метаданные Central | §35 | Central validation |
+| REQ-36 | MUST | Apache-2.0, файл LICENSE | §36 | repo |
+| REQ-37 | MUST | jar + sources + javadoc + pom, все подписаны GPG | §37 | `mvn -Prelease verify` |
+| REQ-38 | MUST | `central-publishing-maven-plugin`, актуальная stable-версия | §38 | dry-run |
+| REQ-39 | MUST | Credentials только в GitHub Secrets | §39 | workflow review |
+| REQ-40 | SHOULD | Maintainer setup документирован | §40 | RELEASING.md |
+| REQ-41 | SHOULD | Перед релизом проверить Central Terms/Tiers | §41 | RELEASING.md |
+| REQ-42 | MAY | GitHub Packages только опционально | §42 | — |
+| REQ-43 | MUST | GitHub Release на каждый stable tag с содержимым §43 | §43 | release workflow |
+| REQ-44 | MUST | SemVer; изменение mapping — behavioral change в CHANGELOG | §44 | CHANGELOG |
+| REQ-45 | SHOULD | `main` = `-SNAPSHOT`, релизы по тегам | §45 | POM/workflow |
+| REQ-46 | MUST | CI matrix: Linux x86_64, Linux arm64, macOS arm64, Windows x86_64 | §46 | CI |
+| REQ-47 | MUST | Тесты с `--enable-native-access`; отдельные `deny` и `warn` job'ы | §47 | CI |
+| REQ-48 | MUST | Unit-тесты по списку §48 | §48 | surefire |
+| REQ-49 | MUST | macOS integration tests (все классы, round-trip) | §49 | CI macOS |
+| REQ-50 | MUST | Windows integration tests с readback | §50 | CI Windows |
+| REQ-51 | MUST | Linux integration tests с readback; skip виден в CI; есть job, требующий `isSupported()` | §51 | CI Linux |
+| REQ-52 | MUST | Тесты layout `THREAD_POWER_THROTTLING_STATE` и `sched_attr` | §52 | unit tests |
+| REQ-53 | MUST | Symbol-resolution тесты на каждой ОС | §53 | CI |
+| REQ-54 | SHOULD | JMH-профиль без runtime-зависимости | §54 | `mvn -Pbenchmarks verify` |
+| REQ-55 | SHOULD | Пример `examples/basic` | §55 | запуск на трёх ОС |
+| REQ-56 | MUST | README отвечает на 12 вопросов | §56 | README review |
+| REQ-57 | MUST | Таблица совместимости со сноской uclamp | §57 | README |
+| REQ-58 | MUST | Семантическая таблица с оговоркой | §58 | README |
+| REQ-59 | MUST | Раздел безопасности | §59 | README |
+| REQ-60 | MUST | Перечисленное в §60 не реализуется в 1.0 | §60 | API review |
+| REQ-65 | MUST | Нет логирования и logging-зависимостей | §65 | dependency tree |
+| REQ-66 | MUST | Zero runtime dependencies | §66 | `mvn dependency:tree` |
+| REQ-67 | MUST | После 1.0.0 public API не ломается в minor | §67 | japicmp (MAY) |
+| REQ-68 | SHOULD | Reproducible build (`project.build.outputTimestamp`) | §68 | POM |
+| REQ-69 | MUST | Минимальные permissions, release job отделён, forks без secrets, actions закреплены | §69 | workflow review |
+| REQ-70 | MUST | Release flow §70 по тегу | §70 | workflow |
+| REQ-71 | MUST | Guard от повторной публикации существующей версии | §71 | workflow |
+| REQ-72 | MUST | CHANGELOG с секцией Platform changes | §72 | repo |
+| REQ-73 | SHOULD | CONTRIBUTING.md | §73 | repo |
+| REQ-74 | MUST | Public API документирован, javadoc без warning'ов; no wildcard imports; native constants именованы | §74 | javadoc |
+| REQ-75 | MUST | Ссылка на authoritative header рядом с каждой native-константой | §75 | code review |
+| REQ-76 | SHOULD | ABI-drift тесты через readback, без C | §76 | tests |
+| REQ-77 | MUST | Ожидаемые linkage-ошибки оборачиваются в `ThreadQosException` с cause | §77 | unit test |
+| REQ-78 | SHOULD | Lazy native linkage; загрузка класса не требует native access | §78 | test без флага |
+| REQ-79 | MUST | Нет кросс-платформенного symbol lookup | §79 | provider factory test |
+| REQ-80 | MUST | `null` → NPE до native | §80 | unit test |
+| REQ-81 | MUST | Interruption status не трогается | §81 | unit test |
+| REQ-82 | MUST | Platform differences priority/QoS документированы | §82 | README |
+| REQ-83 | MUST | `Thread.setPriority()` не вызывается; README предупреждает | §83 | code review, README |
+| REQ-84 | SHOULD | Совместимость с Chronicle Affinity описана; зависимости нет | §84 | README |
+| REQ-88 | MUST | Definition of done агента выполнен | §88 | итоговый отчёт |
+| REQ-89 | MUST | ABI сверен только с authoritative sources | §89 | комментарии в коде |
+| REQ-91 | MUST | 0.1.0 включает все четыре платформы | §91 | release |

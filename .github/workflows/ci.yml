@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MAVEN_ARGS: --batch-mode --no-transfer-progress
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-latest
+          - windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Show environment
+        shell: bash
+        run: |
+          uname -a || true
+          java -version
+          mvn -version
+      - name: Build, test, javadoc, package
+        run: mvn ${{ env.MAVEN_ARGS }} verify
+      - name: Describe module
+        shell: bash
+        run: jar --describe-module --file target/thread-qos-*.jar
+
+  # Spec §47 / T-1.5: negative tests for native access. On JDK 25 a missing
+  # --enable-native-access only warns, so both modes are exercised explicitly.
+  native-access:
+    name: native-access ${{ matrix.mode }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+        mode: [deny, warn]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Run ${{ matrix.mode }}-mode tests
+        run: mvn ${{ env.MAVEN_ARGS }} -Pnative-access-${{ matrix.mode }} test
+
+  # Spec §51 / T-5.7: at least one Linux job must really exercise uclamp. Ubuntu's generic
+  # kernels are built with CONFIG_UCLAMP_TASK=y; this job fails (instead of skipping) if the
+  # provider reports the platform as unsupported, so a regression cannot hide behind a skip.
+  linux-uclamp-required:
+    name: uclamp required (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Show kernel uclamp configuration
+        run: |
+          uname -rm
+          grep -E 'CONFIG_UCLAMP_TASK|CONFIG_CPU_FREQ_GOV_SCHEDUTIL' /boot/config-$(uname -r) || echo "kernel config not readable"
+          cat /proc/sys/kernel/sched_util_clamp_min /proc/sys/kernel/sched_util_clamp_max 2>/dev/null \
+            && echo "sched_util_clamp sysctls present => uclamp enabled" || echo "sched_util_clamp sysctls missing"
+      - name: Run tests requiring uclamp support
+        run: mvn ${{ env.MAVEN_ARGS }} -Dthreadqos.requireSupported=true test
+      - name: Show Linux probe output
+        if: always()
+        run: grep -h "\[linux\]" target/surefire-reports/*-output.txt || true

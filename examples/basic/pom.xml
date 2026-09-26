@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.clericode.examples</groupId>
+  <artifactId>thread-qos-example-basic</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <name>thread-qos example: basic</name>
+  <description>Two dedicated platform threads with different QoS classes (spec §55).</description>
+
+  <properties>
+    <maven.compiler.release>25</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Run `mvn install` in the repository root first, or set this to a released version. -->
+    <thread-qos.version>0.1.0-SNAPSHOT</thread-qos.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.clericode</groupId>
+      <artifactId>thread-qos</artifactId>
+      <version>${thread-qos.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.16.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.6.4</version>
+        <configuration>
+          <executable>java</executable>
+          <arguments>
+            <!-- Grant native access to the library module only. -->
+            <argument>--enable-native-access=com.clericode.threadqos</argument>
+            <argument>--module-path</argument>
+            <modulepath />
+            <argument>--module</argument>
+            <argument>com.clericode.threadqos.examples.basic/com.clericode.threadqos.examples.basic.Example</argument>
+          </arguments>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

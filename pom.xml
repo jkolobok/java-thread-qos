@@ -1,0 +1,498 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.clericode</groupId>
+  <artifactId>thread-qos</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <name>Java Thread QoS</name>
+  <description>Cross-platform Java thread Quality of Service controls using the Foreign Function &amp; Memory API.</description>
+  <url>https://github.com/jkolobok/java-thread-qos</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>jkolobok</id>
+      <name>Nikita Belenkiy</name>
+      <url>https://github.com/jkolobok</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/jkolobok/java-thread-qos.git</connection>
+    <developerConnection>scm:git:git@github.com:jkolobok/java-thread-qos.git</developerConnection>
+    <url>https://github.com/jkolobok/java-thread-qos</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <issueManagement>
+    <system>GitHub Issues</system>
+    <url>https://github.com/jkolobok/java-thread-qos/issues</url>
+  </issueManagement>
+
+  <properties>
+    <!-- REQ-32: Java 25 baseline, stable FFM API. -->
+    <maven.compiler.release>25</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <!-- REQ-68: reproducible build. Bump when cutting a release. -->
+    <project.build.outputTimestamp>2026-09-26T00:00:00Z</project.build.outputTimestamp>
+
+    <!-- REQ-29/REQ-47: the JPMS module name used in the native access flag. -->
+    <threadqos.module>com.clericode.threadqos</threadqos.module>
+    <!-- Base JVM flags for all test executions. -->
+    <threadqos.test.argLine>-Xshare:auto -XX:+UseSerialGC</threadqos.test.argLine>
+    <!-- Set to true on CI runners where uclamp MUST be available (T-5.7). -->
+    <threadqos.requireSupported>false</threadqos.requireSupported>
+
+    <junit.version>6.1.3</junit.version>
+    <jmh.version>1.37</jmh.version>
+
+    <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
+    <maven-surefire-plugin.version>3.6.0</maven-surefire-plugin.version>
+    <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
+    <maven-resources-plugin.version>3.5.0</maven-resources-plugin.version>
+    <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
+    <maven-install-plugin.version>3.2.0</maven-install-plugin.version>
+    <maven-deploy-plugin.version>3.2.0</maven-deploy-plugin.version>
+    <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
+    <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
+    <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+    <maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
+    <central-publishing-maven-plugin.version>0.11.0</central-publishing-maven-plugin.version>
+    <build-helper-maven-plugin.version>3.6.1</build-helper-maven-plugin.version>
+    <exec-maven-plugin.version>3.6.4</exec-maven-plugin.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <!-- REQ-66: zero runtime dependencies. Only test scope below. -->
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.platform</groupId>
+      <artifactId>junit-platform-launcher</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-clean-plugin</artifactId>
+          <version>${maven-clean-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>${maven-resources-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${maven-compiler-plugin.version}</version>
+          <configuration>
+            <release>25</release>
+            <showWarnings>true</showWarnings>
+            <compilerArgs>
+              <arg>-Xlint:all,-processing</arg>
+              <arg>-Werror</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven-surefire-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>${maven-jar-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-install-plugin</artifactId>
+          <version>${maven-install-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-deploy-plugin</artifactId>
+          <version>${maven-deploy-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>${maven-source-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>${maven-javadoc-plugin.version}</version>
+          <configuration>
+            <release>25</release>
+            <doclint>all</doclint>
+            <failOnWarnings>true</failOnWarnings>
+            <quiet>true</quiet>
+            <!-- Internal packages are not API (REQ-67); document only the exported package. -->
+            <excludePackageNames>com.clericode.threadqos.internal:com.clericode.threadqos.internal.*</excludePackageNames>
+            <links>
+              <link>https://docs.oracle.com/en/java/javase/25/docs/api/</link>
+            </links>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-gpg-plugin</artifactId>
+          <version>${maven-gpg-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-enforcer-plugin</artifactId>
+          <version>${maven-enforcer-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.sonatype.central</groupId>
+          <artifactId>central-publishing-maven-plugin</artifactId>
+          <version>${central-publishing-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>build-helper-maven-plugin</artifactId>
+          <version>${build-helper-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>${exec-maven-plugin.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-build-environment</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <version>[25,)</version>
+                  <message>java-thread-qos requires JDK 25 or newer (stable FFM API).</message>
+                </requireJavaVersion>
+                <requireMavenVersion>
+                  <version>[3.9.0,)</version>
+                </requireMavenVersion>
+                <!-- REQ-2.1: no JNI/JNA/JNR/JavaCPP style bridges, ever. -->
+                <bannedDependencies>
+                  <excludes>
+                    <exclude>net.java.dev.jna:*</exclude>
+                    <exclude>com.github.jnr:*</exclude>
+                    <exclude>org.bytedeco:*</exclude>
+                    <exclude>com.sun.jna:*</exclude>
+                  </excludes>
+                  <message>Native interop must use java.lang.foreign only (spec §2.1).</message>
+                </bannedDependencies>
+                <!-- REQ-66: only test-scoped dependencies are allowed. -->
+                <banTransitiveDependencies>
+                  <excludes>
+                    <exclude>*:*:*:*:test</exclude>
+                  </excludes>
+                </banTransitiveDependencies>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- REQ-47: tests run on the module path with native access granted to the library module only. -->
+          <argLine>${threadqos.test.argLine} --enable-native-access=${threadqos.module}</argLine>
+          <trimStackTrace>false</trimStackTrace>
+          <!-- Negative native-access tests run only from their dedicated profiles. -->
+          <excludes>
+            <exclude>**/nativeaccess/**</exclude>
+          </excludes>
+          <systemPropertyVariables>
+            <threadqos.requireSupported>${threadqos.requireSupported}</threadqos.requireSupported>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <Implementation-Title>${project.name}</Implementation-Title>
+              <Implementation-Version>${project.version}</Implementation-Version>
+              <Implementation-Vendor>jkolobok</Implementation-Vendor>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>verify-javadoc</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>javadoc</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!--
+      Release artifacts (spec §33, §37, §38): sources + javadoc jars, GPG signatures for every
+      artifact, and Central Publisher Portal upload. Credentials never live in the repository:
+      the "central" server entry is provided by ~/.m2/settings.xml (locally) or by
+      actions/setup-java (CI) from GitHub Secrets; the GPG passphrase comes from MAVEN_GPG_PASSPHRASE.
+    -->
+    <profile>
+      <id>release</id>
+      <properties>
+        <!-- Set -Dcentral.autoPublish=false to stop at "validated" and publish manually in the Portal. -->
+        <central.autoPublish>true</central.autoPublish>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <configuration>
+              <bestPractices>true</bestPractices>
+              <gpgArguments>
+                <arg>--pinentry-mode</arg>
+                <arg>loopback</arg>
+              </gpgArguments>
+            </configuration>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>${central.autoPublish}</autoPublish>
+              <waitUntil>published</waitUntil>
+              <deploymentName>${project.artifactId}-${project.version}</deploymentName>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!--
+      JMH benchmarks (spec §54, T-7.4). JMH is a test-scoped dependency of this profile only and
+      never reaches the published POM. Build: mvn -Pbenchmarks verify; run: mvn -Pbenchmarks exec:exec
+    -->
+    <profile>
+      <id>benchmarks</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.openjdk.jmh</groupId>
+          <artifactId>jmh-core</artifactId>
+          <version>${jmh.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.openjdk.jmh</groupId>
+          <artifactId>jmh-generator-annprocess</artifactId>
+          <version>${jmh.version}</version>
+          <scope>test</scope>
+        </dependency>
+      </dependencies>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>add-jmh-sources</id>
+                <phase>generate-test-sources</phase>
+                <goals>
+                  <goal>add-test-source</goal>
+                </goals>
+                <configuration>
+                  <sources>
+                    <source>${project.basedir}/src/jmh/java</source>
+                  </sources>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>default-testCompile</id>
+                <configuration>
+                  <annotationProcessorPaths>
+                    <path>
+                      <groupId>org.openjdk.jmh</groupId>
+                      <artifactId>jmh-generator-annprocess</artifactId>
+                      <version>${jmh.version}</version>
+                    </path>
+                  </annotationProcessorPaths>
+                  <!-- JMH runs on the classpath; keep the generated code out of the module patch. -->
+                  <compilerArgs combine.self="override">
+                    <arg>-Xlint:all,-processing,-restricted</arg>
+                  </compilerArgs>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <configuration>
+              <executable>java</executable>
+              <classpathScope>test</classpathScope>
+              <arguments>
+                <argument>--enable-native-access=ALL-UNNAMED</argument>
+                <argument>-classpath</argument>
+                <classpath />
+                <argument>org.openjdk.jmh.Main</argument>
+                <argument>${jmh.args}</argument>
+              </arguments>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+      <properties>
+        <!-- Override with -Djmh.args="-f 1 -wi 2 -i 3 ThreadQosBenchmark.set.*" -->
+        <jmh.args>.*ThreadQosBenchmark.*</jmh.args>
+      </properties>
+    </profile>
+
+    <!--
+      Negative test, mode "deny" (spec §47, T-1.5): restricted FFM calls without
+      the enable-native-access flag must fail with a ThreadQosException carrying the hint.
+    -->
+    <profile>
+      <id>native-access-deny</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <argLine>${threadqos.test.argLine} --illegal-native-access=deny</argLine>
+              <excludes combine.self="override" />
+              <includes>
+                <include>**/nativeaccess/NativeAccessDenyTest.java</include>
+              </includes>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!--
+      Negative test, mode "warn" (default on JDK 25): the JDK prints a one-time
+      warning, the call succeeds, and the library must still produce the hint text.
+    -->
+    <profile>
+      <id>native-access-warn</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <argLine>${threadqos.test.argLine}</argLine>
+              <excludes combine.self="override" />
+              <includes>
+                <include>**/nativeaccess/NativeAccessWarnTest.java</include>
+              </includes>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

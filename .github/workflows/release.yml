@@ -1,0 +1,149 @@
+name: Release
+
+# Spec §43, §69–§71, T-8.3. Runs only for tags pushed to this repository; forks and pull
+# requests never reach this workflow and never see the secrets.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  MAVEN_ARGS: --batch-mode --no-transfer-progress
+
+jobs:
+  release:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-24.04
+    # Put the four secrets into an environment named "maven-central" restricted to tags v*.
+    environment: maven-central
+    permissions:
+      contents: write   # to create the GitHub Release
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          # Writes ~/.m2/settings.xml with <server><id>central</id> reading the env vars below.
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Resolve version and mode
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          POM_VERSION="$(mvn ${MAVEN_ARGS} -q help:evaluate -Dexpression=project.version -DforceStdout)"
+          echo "tag=$TAG"            >> "$GITHUB_OUTPUT"
+          echo "pom=$POM_VERSION"    >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *-rc* ]]; then
+            echo "Release candidate: dry run (sign, no Central upload)"
+            echo "dryrun=true" >> "$GITHUB_OUTPUT"
+            BASE="${TAG%%-rc*}"
+            if [[ "$POM_VERSION" != "$BASE" && "$POM_VERSION" != "$BASE-SNAPSHOT" ]]; then
+              echo "::error::RC tag $TAG does not match POM version $POM_VERSION"; exit 1
+            fi
+          else
+            echo "dryrun=false" >> "$GITHUB_OUTPUT"
+            if [[ "$POM_VERSION" != "$TAG" ]]; then
+              echo "::error::Tag v$TAG does not match POM version $POM_VERSION (spec §70 step 3)"; exit 1
+            fi
+            if [[ "$POM_VERSION" == *-SNAPSHOT ]]; then
+              echo "::error::Refusing to release a SNAPSHOT version"; exit 1
+            fi
+          fi
+
+      - name: Guard against re-publishing an existing version (spec §71)
+        if: steps.meta.outputs.dryrun == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://repo1.maven.org/maven2/com/clericode/thread-qos/${{ steps.meta.outputs.pom }}/"
+          STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$URL")"
+          if [[ "$STATUS" == "200" ]]; then
+            echo "::error::Version ${{ steps.meta.outputs.pom }} already exists on Maven Central ($URL). Releases are immutable; bump the version."
+            exit 1
+          fi
+          echo "Central returned $STATUS for $URL: version is free"
+
+      - name: Build, test, sign (and publish to Maven Central)
+        shell: bash
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.meta.outputs.dryrun }}" == "true" ]]; then
+            mvn ${MAVEN_ARGS} -Prelease verify
+          else
+            mvn ${MAVEN_ARGS} -Prelease deploy
+          fi
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          sha256sum thread-qos-*.jar thread-qos-*.pom 2>/dev/null > SHA256SUMS || sha256sum thread-qos-*.jar > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Extract changelog section
+        id: changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.pom }}"
+          VERSION="${VERSION%-SNAPSHOT}"
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { p=1; next }
+            p && /^## \[/ { exit }
+            p { print }
+          ' CHANGELOG.md > target/changelog-section.md
+          if [[ ! -s target/changelog-section.md ]]; then
+            echo "_No CHANGELOG section for $VERSION._" > target/changelog-section.md
+          fi
+          {
+            echo "## Maven coordinates"
+            echo
+            echo '```xml'
+            echo "<dependency>"
+            echo "    <groupId>com.clericode</groupId>"
+            echo "    <artifactId>thread-qos</artifactId>"
+            echo "    <version>${{ steps.meta.outputs.pom }}</version>"
+            echo "</dependency>"
+            echo '```'
+            echo
+            echo "- Minimum Java: **25** (stable FFM API, no preview flags)"
+            echo "- Native access: run the JVM with \`--enable-native-access=com.clericode.threadqos\` (module path) or \`--enable-native-access=ALL-UNNAMED\` (classpath). On JDK 25 a missing flag only warns; with \`--illegal-native-access=deny\` the first call fails with a \`ThreadQosException\` explaining the flag."
+            echo "- Supported platforms: macOS 10.10+ (arm64, x86_64); Windows (x86_64, arm64; power throttling needs Windows 10 1709+); Linux x86_64 and aarch64 (kernel 5.3+ with CONFIG_UCLAMP_TASK). Other platforms are a safe no-op."
+            if [[ "${{ steps.meta.outputs.dryrun }}" == "true" ]]; then
+              echo "- **Release candidate**: not published to Maven Central."
+            else
+              echo "- Maven Central: https://central.sonatype.com/artifact/com.clericode/thread-qos/${{ steps.meta.outputs.pom }}"
+            fi
+            echo
+            echo "## Changelog"
+            echo
+            cat target/changelog-section.md
+          } > target/release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: thread-qos ${{ steps.meta.outputs.tag }}
+          body_path: target/release-notes.md
+          prerelease: ${{ steps.meta.outputs.dryrun == 'true' }}
+          files: |
+            target/thread-qos-*.jar
+            target/thread-qos-*.jar.asc
+            target/SHA256SUMS

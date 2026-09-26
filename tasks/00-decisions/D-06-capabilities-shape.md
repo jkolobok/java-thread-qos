@@ -6,7 +6,7 @@
 - **Отклонение от спецификации:** да, см. раздел «Отклонения» в индексе
 - **Зависит от:** нет
 - **Блокирует:** [T-2.2](../02-public-api/T-2.2-qos-capabilities.md), [T-4.3](../04-windows/T-4.3-windows-capability-probe.md), [T-5.4](../05-linux-x86_64/T-5.4-linux-capability-probe.md)
-- **Статус:** todo
+- **Статус:** done
 
 ## Что сделать
 
@@ -21,3 +21,7 @@
 ## Готово, когда
 
 §4 содержит финальный record и таблицу «поле × ОС».
+
+## Результат
+
+§4 содержит финальный record (`architecture`, `powerThrottlingSupported`, `priorityAdjustmentSupported`, `unsupportedReason`), enum `Architecture {X86_64, AARCH64, OTHER}` и таблицу «поле × ОС».
