@@ -6,7 +6,7 @@
 
   <groupId>com.clericode.examples</groupId>
   <artifactId>thread-qos-example-basic</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.1-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>thread-qos example: basic</name>
@@ -15,8 +15,8 @@
   <properties>
     <maven.compiler.release>25</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <!-- Run `mvn install` in the repository root first, or set this to a released version. -->
-    <thread-qos.version>0.1.0-SNAPSHOT</thread-qos.version>
+    <!-- Override with -Dthread-qos.version=... to test a local development version. -->
+    <thread-qos.version>0.1.1</thread-qos.version>
   </properties>
 
   <dependencies>

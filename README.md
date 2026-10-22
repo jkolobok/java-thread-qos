@@ -120,7 +120,7 @@ Minimum runtime: JDK 25. GraalVM native-image is out of scope for 1.x.
 <dependency>
     <groupId>com.clericode</groupId>
     <artifactId>thread-qos</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 

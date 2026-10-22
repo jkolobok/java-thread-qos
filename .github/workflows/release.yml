@@ -84,10 +84,24 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ steps.meta.outputs.dryrun }}" == "true" ]]; then
-            mvn ${MAVEN_ARGS} -Prelease verify
+            mvn ${MAVEN_ARGS} -Prelease deploy -DskipUpload=true
           else
             mvn ${MAVEN_ARGS} -Prelease deploy
           fi
+
+      - name: Validate dry-run Central bundle
+        if: steps.meta.outputs.dryrun == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.pom }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -Z1 target/central-publishing/central-bundle.zip > target/central-bundle-files.txt
+          if grep -E '(^|/)(maven-metadata[^/]*|_remote\.repositories[^/]*|\.locks)(/|$)' target/central-bundle-files.txt; then
+            echo "::error::Central bundle contains local Maven repository metadata"
+            exit 1
+          fi
+          grep -Fx "com/clericode/thread-qos/$RELEASE_VERSION/thread-qos-$RELEASE_VERSION.pom" target/central-bundle-files.txt
 
       - name: Checksums
         shell: bash

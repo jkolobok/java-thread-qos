@@ -18,7 +18,7 @@ the Java API is unchanged.
 
 ### Platform changes
 
-## [0.1.0] - 2026-10-22
+## [0.1.1] - 2026-10-22
 
 First public preview. Scope per spec §91: macOS, Windows, Linux x86_64 and Linux aarch64 in one
 JAR, portable API, Maven Central publication, CI on all four platforms.
@@ -46,6 +46,8 @@ JAR, portable API, Maven Central publication, CI on all four platforms.
 
 ### Fixed
 
+- Upgrade the Central publishing plugin to 0.12.0 to remove Maven 3.10's local metadata from
+  the deployment bundle; RC builds now assemble the bundle with `skipUpload=true`.
 - Preserve the missing-native-access diagnostic after a successful restricted call in JDK 25's
   default warning mode.
 
@@ -68,5 +70,11 @@ JAR, portable API, Maven Central publication, CI on all four platforms.
   library a no-op with `unsupportedReason` set.
 - **Other operating systems**: no-op.
 
-[Unreleased]: https://github.com/jkolobok/java-thread-qos/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/jkolobok/java-thread-qos/releases/tag/v0.1.0
+## [0.1.0] - 2026-10-22 (not published)
+
+Central rejected the deployment bundle because the publishing plugin included Maven 3.10's
+local repository metadata. The original tag is retained; use 0.1.1.
+
+[Unreleased]: https://github.com/jkolobok/java-thread-qos/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/jkolobok/java-thread-qos/releases/tag/v0.1.1
+[0.1.0]: https://github.com/jkolobok/java-thread-qos/tree/v0.1.0
