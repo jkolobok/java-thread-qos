@@ -12,6 +12,12 @@ the Java API is unchanged.
 
 ### Added
 
+- `examples/comparison`: measures throughput per `QosClass` and tail latency of a critical thread
+  under load with and without QoS; README section "Measured effect" with numbers from an Apple
+  M-series Mac.
+- `QosEffectTest` (`mvn -Peffect test`, macOS only): asserts that `BACKGROUND` work runs slower on
+  efficiency cores and that demoting noise threads to `BACKGROUND` protects a critical thread's p99.
+
 ### Changed
 
 ### Fixed

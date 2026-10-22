@@ -253,6 +253,8 @@
           <!-- Negative native-access tests run only from their dedicated profiles. -->
           <excludes>
             <exclude>**/nativeaccess/**</exclude>
+            <!-- Slow, machine-dependent effect demonstration; run with -Peffect. -->
+            <exclude>**/effect/**</exclude>
           </excludes>
           <systemPropertyVariables>
             <threadqos.requireSupported>${threadqos.requireSupported}</threadqos.requireSupported>
@@ -489,6 +491,31 @@
               <includes>
                 <include>**/nativeaccess/NativeAccessWarnTest.java</include>
               </includes>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!--
+      Effect demonstration (README "Measured effect"): asserts that QoS classes change
+      scheduling observably. Takes tens of seconds and needs an idle machine, so it is
+      opt-in: mvn -Peffect test
+    -->
+    <profile>
+      <id>effect</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <excludes combine.self="override" />
+              <includes>
+                <include>**/effect/**</include>
+              </includes>
+              <!-- Measured values go to target/surefire-reports/*-output.txt. -->
+              <redirectTestOutputToFile>true</redirectTestOutputToFile>
             </configuration>
           </plugin>
         </plugins>

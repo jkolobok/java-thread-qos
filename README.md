@@ -26,6 +26,7 @@ Thread.ofPlatform()
 10. [What each QoS level does on each OS](#what-each-qos-level-does-on-each-os)
 11. [What the library does NOT guarantee](#what-the-library-does-not-guarantee)
 12. [Checking runtime support](#checking-runtime-support)
+13. [Measured effect](#measured-effect)
 
 ## What the library does
 
@@ -410,11 +411,68 @@ the requested class, the native function and its error code, for example:
 Failed to set thread QoS: os=Linux, qos=USER_INTERACTIVE, nativeFunction=sched_setattr, errorCode=1 (EPERM: ...)
 ```
 
+## Measured effect
+
+Setting a QoS class costs one native call per thread and changes nothing in Java. What it changes
+in the operating system is measurable. [`examples/comparison`](examples/comparison) runs two
+scenarios and prints the numbers for the machine it runs on:
+
+1. **Throughput.** The same CPU-bound loop runs on a fresh platform thread once per `QosClass`,
+   on an idle machine.
+2. **Tail latency under load.** `2 × availableProcessors` "noise" threads spin while one
+   "critical" thread times ~0.4 ms chunks of work. Four configurations: no QoS anywhere, only the
+   critical thread promoted, only the noise demoted, both.
+
+```bash
+mvn -q -DskipTests install                 # repository root
+java --enable-native-access=com.clericode.threadqos -p target/classes \
+     examples/comparison/src/main/java/com/clericode/threadqos/examples/comparison/Comparison.java
+# or: cd examples/comparison && mvn compile exec:exec
+```
+
+Scenario 2 on an Apple M-series laptop (8 performance + 4 efficiency cores, macOS 26,
+Temurin 25); your numbers will differ, the pattern should not:
+
+```text
+2. Duration of a ~0.4 ms work chunk on a critical thread while 24 noise threads spin (lower is better)
+configuration                                        p50       p90       p99       max
+no QoS at all                                     467 us   1189 us  36776 us  94121 us
+critical=USER_INTERACTIVE, noise untouched        489 us   1889 us  64374 us 169598 us
+critical untouched, noise=BACKGROUND              507 us    805 us   3857 us  37971 us
+critical=USER_INTERACTIVE, noise=BACKGROUND       501 us    569 us    877 us   1959 us
+```
+
+What to read from it:
+
+- **On hybrid CPUs the class decides the core type.** In scenario 1 `UTILITY` and `BACKGROUND`
+  threads run on efficiency cores and finish the same work about 1.5× later than `DEFAULT` on the
+  same idle machine. `DEFAULT`, `USER_INITIATED` and `USER_INTERACTIVE` share the performance
+  cores; the difference between them shows up only under contention.
+- **Promoting the critical thread alone does not help.** With 24 `DEFAULT` noise threads on
+  12 cores, the critical thread's p99 is tens of milliseconds whether or not it is
+  `USER_INTERACTIVE`: the scheduler has nothing to preempt in its favour.
+- **Demoting the noise is what protects the tail.** Once the noise threads are `BACKGROUND`, the
+  critical thread's p99 drops to within a couple of times its p50 and the maximum falls from around
+  100 ms to a few milliseconds. Its p50 does not move: QoS is not about the common case.
+- **Linux behaves differently.** uclamp changes frequency selection and placement, not the CFS
+  share (see [Linux](#linux)); on a homogeneous x86 server with the `performance` governor the
+  numbers above come out equal. That is the platform difference the README warns about, now with
+  numbers.
+
+The same two effects are asserted by `QosEffectTest` (macOS only, thresholds well below the
+values above). It is excluded from `mvn verify` because it takes about a minute and needs an
+idle machine:
+
+```bash
+mvn -Peffect test                          # prints the measured values to the surefire report
+```
+
 ## Building and contributing
 
 ```bash
 mvn verify                       # unit + platform integration tests for this OS, javadoc, jar
 mvn -Pbenchmarks verify exec:exec  # JMH benchmarks (not part of the published artifact)
+mvn -Peffect test                  # opt-in demonstration that QoS changes scheduling (macOS)
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md); maintainers see [RELEASING.md](RELEASING.md).
