@@ -6,7 +6,7 @@
 
   <groupId>com.clericode</groupId>
   <artifactId>thread-qos</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
   <packaging>jar</packaging>
 
   <name>Java Thread QoS</name>
@@ -48,7 +48,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <!-- REQ-68: reproducible build. Bump when cutting a release. -->
-    <project.build.outputTimestamp>2026-09-26T00:00:00Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-10-22T00:00:00Z</project.build.outputTimestamp>
 
     <!-- REQ-29/REQ-47: the JPMS module name used in the native access flag. -->
     <threadqos.module>com.clericode.threadqos</threadqos.module>

@@ -8,6 +8,8 @@ import com.clericode.threadqos.ThreadQosException;
 import com.clericode.threadqos.internal.FfmSupport;
 import org.junit.jupiter.api.Test;
 
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.ValueLayout;
 import java.util.NoSuchElementException;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -37,6 +39,20 @@ class NativeAccessWarnTest {
     @Test
     void linkageErrorsCarryTheHint() {
         ThreadQosException e = FfmSupport.linkageFailure(OperatingSystem.OTHER, "SetThreadInformation",
+                new NoSuchElementException("Symbol not found"));
+        assertTrue(e.getMessage().contains(FLAG), e.getMessage());
+    }
+
+    @Test
+    void hintSurvivesASuccessfulRestrictedCall() {
+        FfmSupport.downcall(OperatingSystem.OTHER, FfmSupport.defaultLookup(), "strlen",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+        assertFalse(FfmSupport.isNativeAccessEnabled(),
+                "warn-mode access must not replace the initial native-access setting");
+        String hint = FfmSupport.nativeAccessHint();
+        assertNotNull(hint);
+        assertTrue(hint.contains(FLAG), hint);
+        ThreadQosException e = FfmSupport.linkageFailure(OperatingSystem.OTHER, "missing-symbol",
                 new NoSuchElementException("Symbol not found"));
         assertTrue(e.getMessage().contains(FLAG), e.getMessage());
     }

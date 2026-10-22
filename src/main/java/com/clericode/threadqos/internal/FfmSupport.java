@@ -34,6 +34,12 @@ public final class FfmSupport {
     /** The JPMS module name used in the native-access hint. */
     public static final String MODULE_NAME = "com.clericode.threadqos";
 
+    // Capture before any restricted call: JDK 25's warn mode enables native access on the
+    // first such call to suppress subsequent warnings. Reading the live flag afterwards
+    // would lose the diagnostic explaining the missing --enable-native-access option.
+    private static final boolean NATIVE_ACCESS_ENABLED_AT_INITIALIZATION =
+            FfmSupport.class.getModule().isNativeAccessEnabled();
+
     /** The single native linker for the process. */
     public static final Linker LINKER = Linker.nativeLinker();
 
@@ -126,19 +132,19 @@ public final class FfmSupport {
     }
 
     /**
-     * Whether the library's module has native access (spec §31, D-08). On JDK 25 a missing
-     * {@code --enable-native-access} produces only a one-time warning, so this is checked
-     * proactively.
+     * Whether the library's module had native access when this class was initialized
+     * (spec §31, D-08). The value is captured before linking: JDK 25's warn mode enables
+     * access after the first restricted call, which must not erase the missing-flag diagnostic.
      *
-     * @return {@code true} if restricted FFM methods can be called without warnings or errors
+     * @return {@code true} if native access was enabled at initialization
      */
     public static boolean isNativeAccessEnabled() {
-        return FfmSupport.class.getModule().isNativeAccessEnabled();
+        return NATIVE_ACCESS_ENABLED_AT_INITIALIZATION;
     }
 
     /**
-     * Returns the guidance text to append to error messages when native access is not enabled,
-     * or {@code null} when it is enabled.
+     * Returns the guidance text to append to error messages when native access was not enabled
+     * at initialization, or {@code null} when it was enabled.
      *
      * @return the hint or {@code null}
      */

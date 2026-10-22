@@ -12,19 +12,13 @@ the Java API is unchanged.
 
 ### Added
 
-- `examples/comparison`: measures throughput per `QosClass` and tail latency of a critical thread
-  under load with and without QoS; README section "Measured effect" with numbers from an Apple
-  M-series Mac.
-- `QosEffectTest` (`mvn -Peffect test`, macOS only): asserts that `BACKGROUND` work runs slower on
-  efficiency cores and that demoting noise threads to `BACKGROUND` protects a critical thread's p99.
-
 ### Changed
 
 ### Fixed
 
 ### Platform changes
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-10-22
 
 First public preview. Scope per spec §91: macOS, Windows, Linux x86_64 and Linux aarch64 in one
 JAR, portable API, Maven Central publication, CI on all four platforms.
@@ -44,6 +38,16 @@ JAR, portable API, Maven Central publication, CI on all four platforms.
 - JPMS module `com.clericode.threadqos` exporting a single package; zero runtime
   dependencies; no JNI/JNA/native binaries (FFM only, JDK 25).
 - JMH benchmark profile (`-Pbenchmarks`) and `examples/basic`.
+- `examples/comparison`: measures throughput per `QosClass` and tail latency of a critical thread
+  under load with and without QoS; README section "Measured effect" with numbers from an Apple
+  M-series Mac.
+- `QosEffectTest` (`mvn -Peffect test`, macOS only): asserts that `BACKGROUND` work runs slower on
+  efficiency cores and that demoting noise threads to `BACKGROUND` protects a critical thread's p99.
+
+### Fixed
+
+- Preserve the missing-native-access diagnostic after a successful restricted call in JDK 25's
+  default warning mode.
 
 ### Platform changes
 
