@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -41,7 +42,22 @@ jobs:
           java -version
           mvn -version
       - name: Build, test, javadoc, package
-        run: mvn ${{ env.MAVEN_ARGS }} verify
+        run: mvn ${{ env.MAVEN_ARGS }} -Papi-compat verify
+      - name: Run four-worker validation workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          java --enable-native-access=com.clericode.threadqos \
+            --module-path target/classes --add-modules com.clericode.threadqos \
+            examples/validation/Validation.java 3 --require-supported | tee target/validation.txt
+      - name: Upload validation and API compatibility reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-${{ matrix.os }}
+          path: |
+            target/validation.txt
+            target/japicmp/
       - name: Describe module
         shell: bash
         run: jar --describe-module --file target/thread-qos-*.jar

@@ -1,25 +1,29 @@
 # Java Thread QoS — тикеты по этапам
 
-Источник требований: [`../java-thread-qos-spec.md`](../java-thread-qos-spec.md). Ссылки `§N` указывают на разделы спецификации. Один тикет = один файл. Готовые тикеты (статус `done`) лежат в `done/<этап>/`; в папках этапов остаются только открытые.
+Требования зафиксированы в тикетах; ссылки `§N` относятся к исторической спецификации
+`java-thread-qos-spec.md`, удалённой из репозитория. Один тикет = один файл. Готовые тикеты
+(статус `done`) лежат в `done/<этап>/`; в папках этапов остаются только открытые.
 
 Порядок этапов линейный, кроме этапов 3, 4, 5 (macOS, Windows, Linux x86_64): они независимы и могут идти параллельно после этапа 2. Этап 0 не содержит кода: это решения, без которых код пришлось бы переписывать.
 
 Пометка **[правка]** означает, что тикет отклоняется от текста спецификации по итогам ревью; сводка отклонений внизу.
 
-## Статус (2026-09-26)
+## Статус (2026-10-22)
+
+Проверенные публикация, CI и локальные измерения: [отчёт](../docs/validation.md).
 
 | Этап | Статус | Примечание |
 |---|---|---|
 | 0. Решения | done | все девять решений внесены в спецификацию (§4, §15.1.1, §16.1, §23.1, §29, §31, §32.1, §47, §95) |
-| 1. Bootstrap | done | `mvn verify` зелёный локально; CI-прогон на GitHub runner’ах — после push |
-| 2. Публичный API | done | 154 теста в `mvn verify` на macOS (16 skipped — integration-тесты других ОС) |
+| 1. Bootstrap | done | опубликованный commit прошёл CI на всех четырёх runner’ах |
+| 2. Публичный API | done | локально 148 тестов: 133 passed, 15 skipped (integration других ОС); japicmp против опубликованного 0.1.1 |
 | 3. macOS | done | integration + round-trip через `qos_class_self()` проверены на macOS arm64 |
-| 4. Windows | done (code) | unit-тесты на фейке; integration-тесты выполняются только на `windows-latest` |
-| 5. Linux x86_64 | done (code) | в Docker (ядро без `CONFIG_UCLAMP_TASK`) проверены syscall-биндинг и переход EOPNOTSUPP → unsupported; полный uclamp-путь — на `ubuntu-24.04` |
-| 6. Linux aarch64 | done (code) | то же в Docker arm64 |
+| 4. Windows | done | unit + native integration на `windows-latest` прошли в CI опубликованной версии |
+| 5. Linux x86_64 | done | CI `ubuntu-24.04`, включая обязательный uclamp, успешен |
+| 6. Linux aarch64 | done | CI `ubuntu-24.04-arm`, включая обязательный uclamp, успешен |
 | 7. Документация | done | README, Javadoc, `examples/basic`, `-Pbenchmarks`, ABI-тесты |
-| 8. Release engineering | done, кроме T-8.6 | профиль `release`, Central plugin, `release.yml`, `RELEASING.md`, CHANGELOG; сам релиз требует аккаунта Central, GPG-ключа и secrets |
-| 9. Валидация 1.0.0 | blocked | ждёт релиза 0.1.0 |
+| 8. Release engineering | done | 0.1.1 в Central; независимый basic consumer проверен; 0.1.0 заменён после отказа Central |
+| 9. Валидация 1.0.0 | in_progress | стенд и API compatibility готовы; нужны реальные application-отчёты и окончательная заморозка API |
 
 Статус каждого тикета — в поле **Статус** и разделе **Результат** внутри файла тикета.
 
@@ -114,14 +118,14 @@
 
 ## Этап 8. Release engineering
 
-Папка: `done/08-release/` (T-8.6 — в `08-release/`)
+Папка: `done/08-release/`
 
 - [T-8.1 Sources, javadoc, GPG](done/08-release/T-8.1-sources-javadoc-gpg.md) — §33, §37
 - [T-8.2 Central Publisher Portal](done/08-release/T-8.2-central-portal.md) — §35, §38, §39, §41
 - [T-8.3 Release workflow](done/08-release/T-8.3-release-workflow.md) — §43, §69, §70, §71
 - [T-8.4 Maintainer setup](done/08-release/T-8.4-maintainer-setup-docs.md) — §40, §41
 - [T-8.5 Versioning и CHANGELOG](done/08-release/T-8.5-versioning-changelog.md) — §44, §45, §72
-- [T-8.6 Релиз 0.1.0](08-release/T-8.6-release-0-1-0.md) — §91
+- [T-8.6 Первый публичный релиз (0.1.1)](done/08-release/T-8.6-release-0-1-0.md) — §91
 
 ## Этап 9. Валидация перед 1.0.0
 

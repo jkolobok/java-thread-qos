@@ -14,8 +14,13 @@ env:
   MAVEN_ARGS: --batch-mode --no-transfer-progress
 
 jobs:
+  validation:
+    name: Validate tagged commit
+    uses: ./.github/workflows/ci.yml
+
   release:
     name: Publish ${{ github.ref_name }}
+    needs: validation
     runs-on: ubuntu-24.04
     # Put the four secrets into an environment named "maven-central" restricted to tags v*.
     environment: maven-central
@@ -68,12 +73,21 @@ jobs:
         run: |
           set -euo pipefail
           URL="https://repo1.maven.org/maven2/com/clericode/thread-qos/${{ steps.meta.outputs.pom }}/"
-          STATUS="$(curl -s -o /dev/null -w '%{http_code}' "$URL")"
-          if [[ "$STATUS" == "200" ]]; then
-            echo "::error::Version ${{ steps.meta.outputs.pom }} already exists on Maven Central ($URL). Releases are immutable; bump the version."
-            exit 1
-          fi
-          echo "Central returned $STATUS for $URL: version is free"
+          STATUS="$(curl --silent --show-error --location --retry 3 \
+            --connect-timeout 10 --max-time 60 -o /dev/null -w '%{http_code}' "$URL")"
+          case "$STATUS" in
+            200)
+              echo "::error::Version ${{ steps.meta.outputs.pom }} already exists on Maven Central ($URL). Releases are immutable; bump the version."
+              exit 1
+              ;;
+            404)
+              echo "Central returned 404 for $URL: version is free"
+              ;;
+            *)
+              echo "::error::Cannot determine whether version exists: Central returned $STATUS for $URL"
+              exit 1
+              ;;
+          esac
 
       - name: Build, test, sign (and publish to Maven Central)
         shell: bash

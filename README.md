@@ -28,6 +28,9 @@ Thread.ofPlatform()
 12. [Checking runtime support](#checking-runtime-support)
 13. [Measured effect](#measured-effect)
 
+Development and release validation: [four-worker scenario](examples/validation/README.md),
+[platform evidence](docs/validation.md), [API compatibility and 1.0 candidate](docs/api-stability.md).
+
 ## What the library does
 
 `ThreadQos.set(QosClass)` tells the operating system how latency-sensitive the **current Java

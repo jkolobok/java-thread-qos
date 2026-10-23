@@ -70,15 +70,22 @@ the artifacts and carry the changelog. Nothing is published from the regular CI 
    git tag -a vX.Y.Z -m "thread-qos X.Y.Z"
    git push origin main vX.Y.Z
    ```
-5. The `release` workflow (`.github/workflows/release.yml`) then: verifies that the tag matches the
-   POM version, checks that the version does not already exist on Central (releases are immutable,
-   spec §71), runs `mvn -Prelease deploy` (tests, sources, javadoc, GPG signatures, Central upload
+5. The `release` workflow (`.github/workflows/release.yml`) first runs the reusable CI workflow
+   on the tagged commit: all four platforms, native-access modes, required uclamp, API comparison
+   and four-worker smoke reports. Publication depends on all these jobs succeeding. It then
+   verifies that the tag matches the POM version, checks that the version does not already exist
+   on Central (releases are immutable, spec §71; only HTTP 404 is accepted as absent, other errors
+   abort), runs `mvn -Prelease deploy` (tests, sources, javadoc, GPG signatures, Central upload
    with `autoPublish`), and creates the GitHub Release with the changelog section, Maven
    coordinates, Java version, `--enable-native-access` notice, supported platforms, Central link,
    the three jars and `SHA256SUMS`.
 6. Verify the artifact at https://central.sonatype.com/artifact/com.clericode/thread-qos and,
    after sync, at https://repo1.maven.org/maven2/com/clericode/thread-qos/X.Y.Z/.
 7. Set `main` back to the next `-SNAPSHOT` version.
+
+Before 1.0.0, complete the real-application reports in [T-9.1](tasks/09-validation/T-9.1-real-app-validation.md)
+and finalize the [API candidate](docs/api-stability.md). CI smoke reports are not evidence
+that this application-level validation is complete.
 
 ### Release candidates / dry run
 

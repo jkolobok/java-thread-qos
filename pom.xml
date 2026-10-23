@@ -6,7 +6,7 @@
 
   <groupId>com.clericode</groupId>
   <artifactId>thread-qos</artifactId>
-  <version>0.1.1</version>
+  <version>0.1.2-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>Java Thread QoS</name>
@@ -74,6 +74,9 @@
     <central-publishing-maven-plugin.version>0.12.0</central-publishing-maven-plugin.version>
     <build-helper-maven-plugin.version>3.6.1</build-helper-maven-plugin.version>
     <exec-maven-plugin.version>3.6.4</exec-maven-plugin.version>
+    <japicmp-maven-plugin.version>0.26.5</japicmp-maven-plugin.version>
+    <threadqos.api.baseline>0.1.1</threadqos.api.baseline>
+    <threadqos.api.currentJar>${project.build.directory}/${project.artifactId}-${project.version}.jar</threadqos.api.currentJar>
   </properties>
 
   <dependencyManagement>
@@ -293,6 +296,52 @@
   </build>
 
   <profiles>
+    <!-- Compare only the exported API with an explicitly published baseline. -->
+    <profile>
+      <id>api-compat</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>com.github.siom79.japicmp</groupId>
+            <artifactId>japicmp-maven-plugin</artifactId>
+            <version>${japicmp-maven-plugin.version}</version>
+            <configuration>
+              <oldVersion>
+                <dependency>
+                  <groupId>${project.groupId}</groupId>
+                  <artifactId>${project.artifactId}</artifactId>
+                  <version>${threadqos.api.baseline}</version>
+                </dependency>
+              </oldVersion>
+              <newVersion>
+                <file>
+                  <path>${threadqos.api.currentJar}</path>
+                </file>
+              </newVersion>
+              <parameter>
+                <includes>
+                  <include>com.clericode.threadqos</include>
+                </includes>
+                <includeExclusively>true</includeExclusively>
+                <accessModifier>protected</accessModifier>
+                <onlyModified>true</onlyModified>
+                <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
+                <breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
+              </parameter>
+            </configuration>
+            <executions>
+              <execution>
+                <id>check-public-api</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>cmp</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <!--
       Release artifacts (spec §33, §37, §38): sources + javadoc jars, GPG signatures for every
       artifact, and Central Publisher Portal upload. Credentials never live in the repository:

@@ -12,9 +12,19 @@ the Java API is unchanged.
 
 ### Added
 
+- `api-compat` Maven profile compares the exported public/protected API with published 0.1.1;
+  binary and source incompatibilities fail CI.
+- Bounded four-worker validation example with baseline/QoS reports for all four CI platforms.
+
 ### Changed
 
+- Resume development at `0.1.2-SNAPSHOT` after the published 0.1.1 release.
+- Release tags must pass the full CI matrix on the tagged commit before publication.
+
 ### Fixed
+
+- The release immutability guard now aborts on Central/network errors; only HTTP 404 permits
+  publishing a new version.
 
 ### Platform changes
 
